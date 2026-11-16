@@ -24,10 +24,12 @@ let
 
     if sudo systemctl start btrbk-usb-varmuuskopio.service; then
       sleep 0.5
+      echo ""
+      echo "Kirjoitetaan puskuri ja irrotetaan levy turvallisesti..."
       sync
       sudo umount /mnt/backup-usb
       echo ""
-      echo "✅ Varmuuskopiointi valmis! Voit nyt irrottaa levyn turvallisesti."
+      echo "✅ Varmuuskopiointi valmis ja levy irrotettu turvallisesti."
     else
       sleep 0.5
       echo ""
@@ -104,7 +106,7 @@ in
         };
         preStart = ''
           mkdir -p /mnt/backup-usb/btrbk/${hostname}
-          chown -R btrbk:btrbk /mnt/backup-usb/btrbk/${hostname}
+          chown btrbk:btrbk /mnt/backup-usb/btrbk/${hostname}
         '';
       };
 
