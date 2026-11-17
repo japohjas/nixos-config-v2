@@ -90,23 +90,23 @@
     "d /home/${username}/Videot/tvheadend-tallenteet 0775 ${username} users - -"
   ];
 
-  # 5. c (udev + systemd)
-  # Merkitään DVB-frontend-laite systemd-yksiköksi. Kun laite kytketään,
-  # systemd käynnistää podman-tvheadend-palvelun. Kun laite irrotetaan,
-  # BindsTo varmistaa, että palvelu sammutetaan automaattisesti.
+  # 5. LUOTETTAVA LAITESIDONTA (udev + systemd)
   services.udev.extraRules = ''
-    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
+    SUBSYSTEM=="dvb", KERNEL=="*frontend*", ACTION=="add|change", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
   '';
 
   systemd.services.podman-tvheadend = {
-    # Estää nixos-rebuild switchiä jäämästä jumiin, jos tikku ei ole kiinni päivityshetkellä
     restartIfChanged = false;
-    
-    # Jos tikku irrotetaan ajon aikana, palvelu sammuu, mutta käynnistys ei jää odottamaan
     bindsTo = [ "dev-dvb-adapter0-frontend0.device" ];
     after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
     wants = [ "network-online.target" ];
+    serviceConfig = {
+      # Hyväksyy Podmanin SIGTERM (143) ja SIGKILL (137) sammutuskoodit puhtaiksi,
+      # jotta palvelu ei jää "failed"-tilaan tikun irrotuksen jälkeen.
+      SuccessExitStatus = [ 137 143 ];
+    };
   };
+
 
 
 
