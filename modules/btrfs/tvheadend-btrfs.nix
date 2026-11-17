@@ -12,155 +12,169 @@
   # Valitse DVB-T2 ja alueeksi Finland: fi-All tai oma alueesi esimerkiksi Finland: fi-Isokylä. 
   # Klikkaa Next ja odota, että kanavahaku löytää kanavat.
   # 
-  #
   # Kanava- ja taajuustiedot Yle HD:lle (DVB-T2) lisäysiksi Tvheadendin kanavahakuun:
   # Mene Configuration -> DVB Inputs -> Muxes.
   # Klikkaa Add.
   # Valitse luomasi DVB-T-verkko.
-  # Syötä asetuksiin kommentissasi olevat tiedot:
-  # 	• Frequency (kHz): 666000 (tai Hz-muodossa 666000000 riippuen siitä, kumpaa yksikköä Tvheadend pyytää)
-  #	• Bandwidth: 8 MHz
-  #	• Delivery system: DVB-T2
-  # Tallenna, jolloin Tvheadend skannaa juuri tämän kyseisen nipun ja löytää Ylen HD-kanavat.
+  # Syötä asetuksiin tiedot:
+  #   • Frequency (kHz): 666000 (tai Hz-muodossa 666000000)
+  #   • Bandwidth: 8 MHz
+  #   • Delivery system: DVB-T2
+  # Tallenna, jolloin Tvheadend skannaa nipun ja löytää Ylen HD-kanavat.
   
   # sudo systemctl start podman-tvheadend.service    Kontin käynnistys
   # sudo systemctl stop podman-tvheadend.service     Kontin sammutus
   # sudo systemctl restart podman-tvheadend.service  Kontin uudelleenkäynnistys
   # sudo systemctl status podman-tvheadend.service   Tilanteen ja lokien tarkistaminen
-  # sudo journalctl -u podman-tvheadend.service -f   Tai lukea kontin antamia suoria lokeja
+  # sudo journalctl -u podman-tvheadend.service -f   Suorien lokien seuranta
+  #
+  # Manuaalinen päivitys Tvheadend-kontille:
+  # sudo podman pull lscr.io/linuxserver/tvheadend:latest
+  # sudo systemctl try-restart podman-tvheadend.service
+  # sudo podman image prune -f
 
-  # ---------------------------------------------------------------------
-  # 1. USB-VIRITTIMEN TUKI (FIRMWARE)
-  # ---------------------------------------------------------------------
-  hardware.enableRedistributableFirmware = true;
-
-  virtualisation.containers.enable = true;
-
-  # Odotetaan, että verkko on ylhäällä ennen kontin käynnistystä
-  systemd.services.podman-tvheadend = {
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
+  # 1. Podmanin perusasetukset + Btrfs-tallennusajuri
+  virtualisation.podman = {
+    enable = true;
+    defaultNetwork.settings.dns_enabled = true;
   };
 
-  # ---------------------------------------------------------------------
-  # 2. BTRFS-AJURIN OPTIMOINTI PODMANILLE
-  # ---------------------------------------------------------------------
-  # Määritetään vain ajuri ilman globaalia graphroot-polkua,
-  # jotta rootless-podman ei mene rikki eikä järjestelmä anna varoitusta.
+  # Käytetään Btrfs:n natiiveja alitaltioita konttien levykerroksille
   virtualisation.containers.storage.settings = {
     storage = {
       driver = "btrfs";
+      runroot = "/run/containers/storage";
+      graphroot = "/var/lib/containers/storage";
     };
   };
 
-  # ---------------------------------------------------------------------
-  # 3. TVHEADEND-KONTTI (ROOT PODMAN)
-  # ---------------------------------------------------------------------
+  # 2. Määritellään Tvheadend-kontti
   virtualisation.oci-containers = {
     backend = "podman";
     containers = {
       tvheadend = {
         image = "lscr.io/linuxserver/tvheadend:latest";
-        autoStart = true;
+        
+        # Pidä false-arvossa: udev ja systemd käynnistävät kontin automaattisesti,
+        # kun DVB-viritin havaitaan järjestelmässä.
+        autoStart = false;
+
         ports = [
           "9981:9981" # Web-käyttöliittymä
           "9982:9982" # HTSP-striimaus
         ];
+
         volumes = [
           "/home/${username}/.config/tvheadend:/config"
           "/home/${username}/Lataukset/tvheadend-tallenteet:/recordings"
         ];
+
         environment = {
           PUID = "1000";
-          PGID = "100"; # NixOS oletus 'users' GID
+          PGID = "100";
           TZ = "Europe/Helsinki";
         };
-        # Oikeudet TV-viritinlaitteeseen (/dev/dvb) ja ryhmäoikeuksien ohitus (bypassing SELinux/Access)
+
         extraOptions = [
           "--device=/dev/dvb:/dev/dvb:rw"
           "--ipc=host"
           "--security-opt=label=disable"
-          "--label=io.containers.autoupdate=registry"
+          "--stop-timeout=1"
         ];
       };
     };
   };
 
-  # ---------------------------------------------------------------------
-  # 4. KANSIOIDEN LUONTI BTRFS-ALIVOLYMEINÄ (SUBVOLUMES) JA NOCOW (+C)
-  # ---------------------------------------------------------------------
+  # 3. Automaattinen Btrfs-alitaltion luonti, oikeudet ja No-COW (+C)
+  # 'v' luo Btrfs-alitaltion automaattisesti (jää pois snapshot-varmuuskopioista).
+  # 'h' asettaa chattr +C -lipun estämään tallenteiden ja tietokannan sirpaloitumisen.
   systemd.tmpfiles.rules = [
-    # Asetukset (.config) luodaan tavallisena hakemistona
     "d /home/${username}/.config/tvheadend 0775 ${username} users - -"
-    
-    # Luodaan tallenteet aitona Btrfs-subvolumeena (v = subvolume)
+    "h /home/${username}/.config/tvheadend - - - - +C"
     "v /home/${username}/Lataukset/tvheadend-tallenteet 0775 ${username} users - -"
-    
-    # Pakotetaan NoCoW (+C) uuteen tallennussubvolumeen pirstoutumisen estämiseksi
     "h /home/${username}/Lataukset/tvheadend-tallenteet - - - - +C"
   ];
 
-  # ---------------------------------------------------------------------
-  # 5. UDEV-SÄÄNTÖ USB-VIRITTIMEN TUNNISTUKSELLE KÄYNNISTYKSESSÄ
-  # ---------------------------------------------------------------------
-  # Aina kun tikku lisätään (add) – oli kone juuri käynnistetty tai ei –
-  # udev ajaa suoraan 'restart'-komennon. Jos kontti ei ollut päällä, se käynnistyy.
-  # Jos kontti oli jo vikatilassa päällä, se käynnistetään uudelleen uuden laitteen kanssa.
-  # ---------------------------------------------------------------------
+ # 4. Luotettava laitesidonta (udev + systemd)
   services.udev.extraRules = ''
-    SUBSYSTEM=="dvb", ACTION=="add", MODE="0666", RUN+="${pkgs.systemd}/bin/systemctl restart podman-tvheadend.service"
-    SUBSYSTEM=="dvb", ACTION=="remove", RUN+="${pkgs.systemd}/bin/systemctl stop podman-tvheadend.service"
+    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
   '';
 
-  # ---------------------------------------------------------------------
-  # 6. PALOMUURIASETUKSET
-  # ---------------------------------------------------------------------
+  systemd.services.podman-tvheadend = {
+    restartIfChanged = false;
+    bindsTo = [ "dev-dvb-adapter0-frontend0.device" ];
+    after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      SuccessExitStatus = [ 137 143 ];
+    };
+  };
+
+  # 5. Palomuurin avaukset
   networking.firewall = {
     allowedTCPPorts = [ 9981 9982 ];
     allowedUDPPorts = [ 9982 ];
   };
 
-  # ---------------------------------------------------------------------
-  # 7. LIVE TV -PIKEA-KUVAKE JÄRJESTELMÄÄN
-  # ---------------------------------------------------------------------
+  # 6. Live TV -pikakuvake työpöytävalikkoon
   environment.systemPackages = [
     (pkgs.makeDesktopItem {
       name = "livetv";
       desktopName = "Live TV";
       genericName = "Televisio";
       comment = "Katso TV-lähetyksiä Tvheadendistä MPV-soittimella";
-      exec = "${pkgs.mpv}/bin/mpv http://localhost:9981/playlist/channels";
+      exec = "mpv http://localhost:9981/playlist/channels";
+      # Jos olet määritellyt käyttäjätunnuksen ja salasanan Tvheadendin web-käyttöliittymään:
+      # exec = "mpv http://kayttaja:salasana@localhost:9981/playlist/channels";
       icon = "mpv";
       terminal = false;
       categories = [ "AudioVideo" "Video" "Player" "TV" ];
       mimeTypes = [ "x-scheme-handler/pvr" ];
     })
-    pkgs.mpv
   ];
 
-  # ---------------------------------------------------------------------
-  # 8. KONTTIEN AUTOMAATTINEN PÄIVITYS (MAANANTAISIN KLO 16:00)
-  # ---------------------------------------------------------------------
-  systemd.services."podman-auto-update" = {
-    description = "Podman konttien automaattinen päivitys";
+  # 7. NIXOS-YHTEENSOPIVA AUTOMAATTIPÄIVITYS + LOKITUS (Maanantaisin klo 16:00)
+  # Tarkista päivityshistoria: journalctl -u tvheadend-update.service
+  # Testaa käsin heti: sudo systemctl start tvheadend-update.service && journalctl -u tvheadend-update.service -n 15
+  systemd.services."tvheadend-update" = {
+    description = "Päivitä Tvheadend-konttikuva, käynnistä palvelu uudelleen ja siivoa vanhat kuvat";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-    path = with pkgs; [ podman coreutils ];
+    
+    path = with pkgs; [ podman systemd coreutils ];
+
     script = ''
-      ${pkgs.podman}/bin/podman auto-update
+      IMAGE="lscr.io/linuxserver/tvheadend:latest"
+      
+      echo "[Tvheadend-päivitys] Tarkistetaan päivityksiä kuvalle $IMAGE..."
+      OLD_ID=$(podman images -q "$IMAGE")
+      
+      podman pull "$IMAGE"
+      NEW_ID=$(podman images -q "$IMAGE")
+      
+      if [ "$OLD_ID" != "$NEW_ID" ]; then
+        echo "[Tvheadend-päivitys] Uusi versio ladattu ($NEW_ID). Käynnistetään palvelu uudelleen..."
+        systemctl try-restart podman-tvheadend.service
+        
+        echo "[Tvheadend-päivitys] Siivotaan vanhat käyttämättömät konttikuvat..."
+        podman image prune -f
+        echo "[Tvheadend-päivitys] Päivitys ja siivous valmis."
+      else
+        echo "[Tvheadend-päivitys] Kuva on jo ajan tasalla ($NEW_ID). Ei toimenpiteitä."
+      fi
     '';
+
     serviceConfig = {
       Type = "oneshot";
-      RemainAfterExit = false;
     };
   };
 
-  systemd.timers."podman-auto-update" = {
-    description = "Ajastin Podman-konttien automaattiselle päivitykselle";
+  systemd.timers."tvheadend-update" = {
+    description = "Viikoittainen Tvheadend-päivitysajastin";
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = [ "" "Mon *-*-* 16:00:00" ];
-      Persistent = false;
+      OnCalendar = "Mon *-*-* 16:00:00";
+      Persistent = true;
     };
   };
 }
