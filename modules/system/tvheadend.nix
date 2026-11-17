@@ -101,10 +101,10 @@
     };
   };
 
-  # 5. Palomuurin avaukset
+    # 5. Palomuurin avaukset
   networking.firewall = {
     allowedTCPPorts = [ 9981 9982 ];
-    allowedUDPPorts =;
+    allowedUDPPorts = [ 9982 ];
   };
 
   # 6. Live TV -pikakuvake työpöytävalikkoon
