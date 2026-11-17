@@ -90,7 +90,7 @@
     "d /home/${username}/Videot/tvheadend-tallenteet 0775 ${username} users - -"
   ];
 
-  # 5. LUOTETTAVA LAITESIDONTA (udev + systemd)
+  # 5. c (udev + systemd)
   # Merkitään DVB-frontend-laite systemd-yksiköksi. Kun laite kytketään,
   # systemd käynnistää podman-tvheadend-palvelun. Kun laite irrotetaan,
   # BindsTo varmistaa, että palvelu sammutetaan automaattisesti.
