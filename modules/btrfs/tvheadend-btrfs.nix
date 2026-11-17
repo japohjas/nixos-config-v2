@@ -40,11 +40,10 @@
   };
 
   # Käytetään Btrfs:n natiiveja alitaltioita konttien levykerroksille
+  # (NixOS asettaa oikeat rootful/rootless-polut automaattisesti ilman varoituksia)
   virtualisation.containers.storage.settings = {
     storage = {
       driver = "btrfs";
-      runroot = "/run/containers/storage";
-      graphroot = "/var/lib/containers/storage";
     };
   };
 
