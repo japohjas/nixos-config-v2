@@ -24,32 +24,35 @@
   # sudo systemctl restart podman-tvheadend.service  Kontin uudelleenkäynnistys
   # sudo systemctl status podman-tvheadend.service   Tilanteen ja lokien tarkistaminen
   # sudo journalctl -u podman-tvheadend.service -f   Tai lukea kontin antamia suoria lokeja
+  #
+  # Manuaalinen päivitys Tvheadend-kontille:
+  # sudo podman pull lscr.io/linuxserver/tvheadend:latest
+  # sudo systemctl try-restart podman-tvheadend.service
+  # Poista vanha kuva, jos haluat säästää levytilaa: 
+  # (automatisesti siivotaan myös päivityksen yhteydessä)
+  # sudo podman image prune -f
+  # Varmista päivityksen onnistuminen:
+  # sudo podman images | grep tvheadend
+  # sudo podman ps -a | grep tvheadend
 
-  # Varmistetaan vain, että verkko on valmis ennen kuin kontti yrittää sitoutua portteihin
-  systemd.services.podman-tvheadend = {
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
+  # 1. Podmanin perusasetukset
+  virtualisation.podman = {
+    enable = true;
+    defaultNetwork.settings.dns_enabled = true;
   };
 
-  # Podman tarvitsee konttien perushallinnan aktivoitua
-  virtualisation.containers.enable = true; 
-  
-  # Kun dns_enabled = true on käytössä, voit luoda Podmanilla omia verkkoja, 
-  # joissa kontit löytävät toisensa suoraan nimen perusteella.
-  # ne voivat (esim kodi kontti) yhdistää Tvheadendiin pelkällä osoitteella 
-  # http://tvheadend:9981
-  # virtualisation.containers.settings = {
-  #   network.default_network_settings.dns_enabled = true;
-  # };
-
-  # Määritellään Tvheadend-kontti kotihakemistopoluilla
+  # 2. Määritellään Tvheadend-kontti
   virtualisation.oci-containers = {
     backend = "podman";
     containers = {
       tvheadend = {
         image = "lscr.io/linuxserver/tvheadend:latest";
-        autoStart = true;  
         
+        # HUOM: Jos käynnistät koneen joskus ilman USB-viritintä, vaihda tähän false,
+        # true saa olla vain, jos varmistat, että viritin on kytkettynä ennen koneen käynnistystä.
+        # jotta systemd ei yritä käynnistää konttia ilman /dev/dvb-laitetta.
+        autoStart = false;
+
         ports = [
           "9981:9981" # Web-käyttöliittymä
           "9982:9982" # HTSP-striimaus
@@ -60,55 +63,47 @@
           "/home/${username}/Videot/tvheadend-tallenteet:/recordings"
         ];
 
-        # $ id
         environment = {
-          PUID = "1000";        
-          PGID = "100";         
+          PUID = "1000";
+          PGID = "100";
           TZ = "Europe/Helsinki";
         };
 
-        # Oikeudet TV-viritinlaitteeseen (/dev/dvb)
         extraOptions = [
-          "--device=/dev/dvb:/dev/dvb:rw" # Läpivienti luku- ja kirjoitusoikeuksin
-          "--ipc=host"                     # Parantaa laiteyhteyksiä host-koneeseen
-          "--security-opt=label=disable"   # Estää SELinux/NixOS-oikeusblokit laitteeseen
-          # "--user=0:0" poistettu, jotta linuxserver-kuvan PUID/PGID logiikka toimii oikein
-          # Podmanin virallinen label, jonka systemd-päivityspalvelu lukee
-          "--label=io.containers.autoupdate=registry" 
+          "--device=/dev/dvb:/dev/dvb:rw"
+          "--ipc=host"
+          "--security-opt=label=disable"
         ];
       };
     };
   };
 
-  # Automaattinen kansioiden luonti ja oikeuksien korjaus
-  # Tämä poistaa tarpeen ajaa mkdir/chown/chmod-komentoja käsin ${username}'n kotihakemistossa.
+  # 3. Varmistetaan verkon valmius ennen käynnistystä
+  systemd.services.podman-tvheadend = {
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+  };
+
+  # 4. Automaattinen kansioiden luonti ja oikeudet
   systemd.tmpfiles.rules = [
     "d /home/${username}/.config/tvheadend 0775 ${username} users - -"
     "d /home/${username}/Videot/tvheadend-tallenteet 0775 ${username} users - -"
   ];
 
-  # ---------------------------------------------------------------------
-  # KORJAUS: VARMA UDEV-SÄÄNTÖ LATEEN KYTKENNÄLLE BOOTIN JÄLKEEN
-  # ---------------------------------------------------------------------
-  # Aina kun tikku lisätään (add) – oli kone juuri käynnistetty tai ei –
-  # udev ajaa suoraan 'restart'-komennon. Jos kontti ei ollut päällä, se käynnistyy.
-  # Jos kontti oli jo vikatilassa päällä, se käynnistetään uudelleen uuden laitteen kanssa.
-  # ---------------------------------------------------------------------
+  # 5. KORJATTU UDEV-SÄÄNTÖ (Laukeaa vain kerran per viritin)
+  # "--no-block" estää udevia jumiutumasta kontin käynnistyksen ajaksi.
   services.udev.extraRules = ''
-    SUBSYSTEM=="dvb", ACTION=="add", MODE="0666", RUN+="${pkgs.systemd}/bin/systemctl restart podman-tvheadend.service"
-    SUBSYSTEM=="dvb", ACTION=="remove", RUN+="${pkgs.systemd}/bin/systemctl stop podman-tvheadend.service"
+    SUBSYSTEM=="dvb", KERNEL=="frontend*", ACTION=="add", MODE="0666", RUN+="${pkgs.systemd}/bin/systemctl --no-block restart podman-tvheadend.service"
+    SUBSYSTEM=="dvb", KERNEL=="frontend*", ACTION=="remove", RUN+="${pkgs.systemd}/bin/systemctl --no-block stop podman-tvheadend.service"
   '';
-  # ---------------------------------------------------------------------
 
-
-
-  # Avataan palomuuri
+  # 6. Palomuurin avaukset
   networking.firewall = {
     allowedTCPPorts = [ 9981 9982 ];
-    allowedUDPPorts = [ 9982 ]; # HTSP hyötyy joskus myös UDP-portista vakauden vuoksi
+    allowedUDPPorts = [ 9982 ];
   };
 
-  # Luodaan Live TV -pikakuvake globaalisti NixOS-tyyliin makeDesktopItem-työkalulla
+  # 7. Live TV -pikakuvake työpöytävalikkoon
   environment.systemPackages = [
     (pkgs.makeDesktopItem {
       name = "livetv";
@@ -116,6 +111,8 @@
       genericName = "Televisio";
       comment = "Katso TV-lähetyksiä Tvheadendistä MPV-soittimella";
       exec = "mpv http://localhost:9981/playlist/channels";
+      # Jos olet määritellyt käyttäjätunnuksen ja salasanan Tvheadendin web-käyttöliittymään
+      # exec = "mpv http://kayttaja:salasana@localhost:9981/playlist/channels";
       icon = "mpv";
       terminal = false;
       categories = [ "AudioVideo" "Video" "Player" "TV" ];
@@ -123,39 +120,53 @@
     })
   ];
 
-  # 1. PALVELU, JOKA SUORITTAA AUTOMAATTISEN PÄIVITYKSEN KERRAN VIIKOSSA
-  # sudo systemctl start podman-auto-update.service   # Käynnistää päivityksen heti
-  # sudo systemctl status podman-auto-update.service  # Näyttää palvelun tilan ja lokit
-  # sudo journalctl -u podman-auto-update.service -f  # Seurata päivityksen etenemistä
-  # sudo podman auto-update  # Suorittaa automaattisen ilman systemd:tä päivityksen kontille, jos se on käynnissä
-  # sudo podman ps           # Listaa käynnissä olevat kontit
-  systemd.services."podman-auto-update" = {
-    description = "Podman konttien automaattinen päivitys";
+  # 8. NIXOS-YHTEENSOPIVA AUTOMAATTIPÄIVITYS + LOKITUS (Maanantaisin klo 16:00)
+  # Helppo lokin seuranta. Kun palvelu ajetaan, kaikki echo-rivit tallentuvat 
+  # suoraan journald-lokiin. Voit tarkistaa päivityshistorian milloin tahansa komennolla 
+  # journalctl -u tvheadend-update.service
+  #
+  # Voit testata palvelun toiminnan heti nixos-rebuild switch -ajon jälkeen komennolla 
+  # sudo systemctl start tvheadend-update.service && journalctl -u tvheadend-update.service -n 15
+  systemd.services."tvheadend-update" = {
+    description = "Päivitä Tvheadend-konttikuva, käynnistä palvelu uudelleen ja siivoa vanhat kuvat";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     
-    # Määritetään tarvittavat työkalut palvelun käyttöön
-    path = with pkgs; [ podman coreutils ]; 
-    
-    # Suoritettava komentoriviskripti
+    path = with pkgs; [ podman systemd coreutils ];
+
     script = ''
-      ${pkgs.podman}/bin/podman auto-update
+      IMAGE="lscr.io/linuxserver/tvheadend:latest"
+      
+      echo "[Tvheadend-päivitys] Tarkistetaan päivityksiä kuvalle $IMAGE..."
+      OLD_ID=$(podman images -q "$IMAGE")
+      
+      podman pull "$IMAGE"
+      NEW_ID=$(podman images -q "$IMAGE")
+      
+      if [ "$OLD_ID" != "$NEW_ID" ]; then
+        echo "[Tvheadend-päivitys] Uusi versio ladattu ($NEW_ID). Käynnistetään palvelu uudelleen..."
+        systemctl try-restart podman-tvheadend.service
+        
+        echo "[Tvheadend-päivitys] Siivotaan vanhat käyttämättömät konttikuvat..."
+        podman image prune -f
+        echo "[Tvheadend-päivitys] Päivitys ja siivous valmis."
+      else
+        echo "[Tvheadend-päivitys] Kuva on jo ajan tasalla ($NEW_ID). Ei toimenpiteitä."
+      fi
     '';
-    
+
     serviceConfig = {
       Type = "oneshot";
-      RemainAfterExit = false;
     };
   };
 
-  # 2. AKTIVOIDAAN PODMANIN OMA AUTOMAATTIPÄIVITYS SYSTEMD-AJASTIMELLA
-  systemd.timers."podman-auto-update" = {
-    description = "Ajastin Podman konttien automaattiselle päivitykselle";
+
+  systemd.timers."tvheadend-update" = {
+    description = "Viikoittainen Tvheadend-päivitysajastin";
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      # KORJAUS: Tyhjennetään oletusaikataulut ja asetetaan uusi tarkka maanantai klo 16:00
-      OnCalendar = [ "" "Mon *-*-* 16:00:00" ]; 
-      Persistent = false;
+      OnCalendar = "Mon *-*-* 16:00:00";
+      Persistent = true; # Ajaa päivityksen myöhemmin, jos kone oli kiinni maanantaina klo 16
     };
   };
 }
