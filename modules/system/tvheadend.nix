@@ -91,8 +91,10 @@
   ];
 
   # 5. LUOTETTAVA LAITESIDONTA (udev + systemd)
+  # ÄLÄ lisää tähän ACTION-ehtoa! TAG+="systemd" täytyy olla voimassa myös
+  # remove-tapahtumassa, jotta systemd huomaa tikun irrotuksen.
   services.udev.extraRules = ''
-    SUBSYSTEM=="dvb", KERNEL=="*frontend*", ACTION=="add|change", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
+    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
   '';
 
   systemd.services.podman-tvheadend = {
@@ -101,11 +103,10 @@
     after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
     wants = [ "network-online.target" ];
     serviceConfig = {
-      # Hyväksyy Podmanin SIGTERM (143) ja SIGKILL (137) sammutuskoodit puhtaiksi,
-      # jotta palvelu ei jää "failed"-tilaan tikun irrotuksen jälkeen.
       SuccessExitStatus = [ 137 143 ];
     };
   };
+
 
 
 
