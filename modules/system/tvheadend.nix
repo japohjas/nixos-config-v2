@@ -79,10 +79,10 @@
   };
 
   # 3. Varmistetaan verkon valmius ennen käynnistystä
-  systemd.services.podman-tvheadend = {
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-  };
+  # systemd.services.podman-tvheadend = {
+  #   after = [ "network-online.target" ];
+  #   wants = [ "network-online.target" ];
+  # };
 
   # 4. Automaattinen kansioiden luonti ja oikeudet
   systemd.tmpfiles.rules = [
@@ -90,12 +90,20 @@
     "d /home/${username}/Videot/tvheadend-tallenteet 0775 ${username} users - -"
   ];
 
-  # 5. KORJATTU UDEV-SÄÄNTÖ (Laukeaa vain kerran per viritin)
-  # "--no-block" estää udevia jumiutumasta kontin käynnistyksen ajaksi.
+  # 5. LUOTETTAVA LAITESIDONTA (udev + systemd)
+  # Merkitään DVB-frontend-laite systemd-yksiköksi. Kun laite kytketään,
+  # systemd käynnistää podman-tvheadend-palvelun. Kun laite irrotetaan,
+  # BindsTo varmistaa, että palvelu sammutetaan automaattisesti.
   services.udev.extraRules = ''
-    SUBSYSTEM=="dvb", KERNEL=="frontend*", ACTION=="add", MODE="0666", RUN+="${pkgs.systemd}/bin/systemctl --no-block restart podman-tvheadend.service"
-    SUBSYSTEM=="dvb", KERNEL=="frontend*", ACTION=="remove", RUN+="${pkgs.systemd}/bin/systemctl --no-block stop podman-tvheadend.service"
+    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
   '';
+
+  systemd.services.podman-tvheadend = {
+    bindsTo = [ "dev-dvb-adapter0-frontend0.device" ];
+    after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
+    wants = [ "network-online.target" ];
+  };
+
 
   # 6. Palomuurin avaukset
   networking.firewall = {
