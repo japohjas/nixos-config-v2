@@ -1,4 +1,4 @@
-{ config, pkgs, username, ... }: {
+{ config, pkgs, lib, username, ... }: {
 
   # Tvheadendin web-käyttöliittymä aukeaa selaimessasi osoitteessa 
   # http://localhost:9981 tai oman koneesi IP-osoitteella
@@ -111,7 +111,7 @@
       ExecStartPre = "${pkgs.coreutils}/bin/sleep 2";
       # Tappaa kontin heti (1 sekunnissa) ilman 10s odotusta, jotta lukkiutunut
       # DVB-ajuri ei jumita seuraavaa käynnistystä.
-      TimeoutStopSec = 2;
+      TimeoutStopSec = lib.mkForce 2;
       SuccessExitStatus = [ 137 143 ];
     };
   };
