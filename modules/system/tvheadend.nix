@@ -1,4 +1,4 @@
-{ config, pkgs, username, ... }: {
+{ config, pkgs, lib, username, ... }: {
 
   # Tvheadendin web-käyttöliittymä aukeaa selaimessasi osoitteessa 
   # http://localhost:9981 tai oman koneesi IP-osoitteella
@@ -24,12 +24,13 @@
   # sudo systemctl restart podman-tvheadend.service  Kontin uudelleenkäynnistys
   # sudo systemctl status podman-tvheadend.service   Tilanteen ja lokien tarkistaminen
   # sudo journalctl -u podman-tvheadend.service -f   Tai lukea kontin antamia suoria lokeja
+  # sudo journalctl -u tvviritin-watcher.service -f  USB-tikun tunnistuslokien seuranta
   #
   # Manuaalinen päivitys Tvheadend-kontille:
   # sudo podman pull lscr.io/linuxserver/tvheadend:latest
   # sudo systemctl try-restart podman-tvheadend.service
   # Poista vanha kuva, jos haluat säästää levytilaa: 
-  # (automatisesti siivotaan myös päivityksen yhteydessä)
+  # (automaattisesti siivotaan myös päivityksen yhteydessä)
   # sudo podman image prune -f
   # Varmista päivityksen onnistuminen:
   # sudo podman images | grep tvheadend
@@ -48,9 +49,8 @@
       tvheadend = {
         image = "lscr.io/linuxserver/tvheadend:latest";
         
-        # HUOM: Jos käynnistät koneen joskus ilman USB-viritintä, vaihda tähän false,
-        # true saa olla vain, jos varmistat, että viritin on kytkettynä ennen koneen käynnistystä.
-        # jotta systemd ei yritä käynnistää konttia ilman /dev/dvb-laitetta.
+        # Pidä false-arvossa: tvviritin-watcher hoitaa käynnistyksen automaattisesti,
+        # kun PCTV 292e -tikku on kytkettynä.
         autoStart = false;
 
         ports = [
@@ -73,47 +73,78 @@
           "--device=/dev/dvb:/dev/dvb:rw"
           "--ipc=host"
           "--security-opt=label=disable"
+          "--stop-timeout=1"
         ];
       };
     };
   };
 
-  # 3. Varmistetaan verkon valmius ennen käynnistystä
-  # systemd.services.podman-tvheadend = {
-  #   after = [ "network-online.target" ];
-  #   wants = [ "network-online.target" ];
-  # };
-
-  # 4. Automaattinen kansioiden luonti ja oikeudet
+  # 3. Automaattinen kansioiden luonti ja oikeudet
   systemd.tmpfiles.rules = [
     "d /home/${username}/.config/tvheadend 0775 ${username} users - -"
     "d /home/${username}/Videot/tvheadend-tallenteet 0775 ${username} users - -"
   ];
 
-  # 5. LUOTETTAVA LAITESIDONTA (udev + systemd)
-  # ÄLÄ lisää tähän ACTION-ehtoa! TAG+="systemd" täytyy olla voimassa myös
-  # remove-tapahtumassa, jotta systemd huomaa tikun irrotuksen.
+  # 4. POMMINVARMA USB-VIRITTIMEN SEURANTA (PCTV Systems tripleStick 292e: 2013:025f)
+  # Luodaan laitelinkki /dev/tvviritin ilman udev-sandboxin estämiä komentoja.
   services.udev.extraRules = ''
-    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
+    SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2013", ATTR{idProduct}=="025f", SYMLINK+="tvviritin"
+    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666"
   '';
+
+  # Taustapalvelu, joka valvoo /dev/tvviritin -linkin ilmestymistä ja katoamista reaaliajassa
+  systemd.services."tvviritin-watcher" = {
+    description = "Käynnistä ja sammuta Tvheadend USB-virittimen kytkennän mukaan";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "systemd-udevd.service" "network-online.target" ];
+    path = with pkgs; [ systemd coreutils inotify-tools ];
+
+    script = ''
+      # Tarkistetaan alkutilanne koneen käynnistyessä
+      if [ -e /dev/tvviritin ]; then
+        echo "[TV-viritin] Viritin havaittu käynnistyksessä. Käynnistetään Tvheadend..."
+        sleep 2
+        systemctl start podman-tvheadend.service
+      fi
+
+      # Seurataan /dev-hakemistoa (0% CPU-kuorma, reagoi välittömästi)
+      inotifywait -m -e create -e delete /dev --format '%e %f' | while read EVENT FILE; do
+        if [ "$FILE" = "tvviritin" ]; then
+          if [ "$EVENT" = "CREATE" ]; then
+            echo "[TV-viritin] USB-viritin kytketty. Odotetaan firmwarea ja käynnistetään Tvheadend..."
+            sleep 2
+            systemctl restart podman-tvheadend.service
+          elif [ "$EVENT" = "DELETE" ]; then
+            echo "[TV-viritin] USB-viritin irrotettu. Sammutetaan Tvheadend välittömästi..."
+            systemctl stop podman-tvheadend.service
+          fi
+        fi
+      done
+    '';
+
+    serviceConfig = {
+      Restart = "always";
+      RestartSec = 2;
+    };
+  };
 
   systemd.services.podman-tvheadend = {
     restartIfChanged = false;
-    bindsTo = [ "dev-dvb-adapter0-frontend0.device" ];
-    after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
+    after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
     serviceConfig = {
+      TimeoutStopSec = lib.mkForce 2;
       SuccessExitStatus = [ 137 143 ];
     };
   };
 
-  # 6. Palomuurin avaukset
+  # 5. Palomuurin avaukset
   networking.firewall = {
     allowedTCPPorts = [ 9981 9982 ];
     allowedUDPPorts = [ 9982 ];
   };
 
-  # 7. Live TV -pikakuvake työpöytävalikkoon
+  # 6. Live TV -pikakuvake työpöytävalikkoon
   environment.systemPackages = [
     (pkgs.makeDesktopItem {
       name = "livetv";
@@ -121,7 +152,7 @@
       genericName = "Televisio";
       comment = "Katso TV-lähetyksiä Tvheadendistä MPV-soittimella";
       exec = "mpv http://localhost:9981/playlist/channels";
-      # Jos olet määritellyt käyttäjätunnuksen ja salasanan Tvheadendin web-käyttöliittymään
+      # Jos olet määritellyt käyttäjätunnuksen ja salasanan Tvheadendin web-käyttöliittymään:
       # exec = "mpv http://kayttaja:salasana@localhost:9981/playlist/channels";
       icon = "mpv";
       terminal = false;
@@ -130,13 +161,9 @@
     })
   ];
 
-  # 8. NIXOS-YHTEENSOPIVA AUTOMAATTIPÄIVITYS + LOKITUS (Maanantaisin klo 16:00)
-  # Helppo lokin seuranta. Kun palvelu ajetaan, kaikki echo-rivit tallentuvat 
-  # suoraan journald-lokiin. Voit tarkistaa päivityshistorian milloin tahansa komennolla 
-  # journalctl -u tvheadend-update.service
-  #
-  # Voit testata palvelun toiminnan heti nixos-rebuild switch -ajon jälkeen komennolla 
-  # sudo systemctl start tvheadend-update.service && journalctl -u tvheadend-update.service -n 15
+  # 7. NIXOS-YHTEENSOPIVA AUTOMAATTIPÄIVITYS + LOKITUS (Maanantaisin klo 16:00)
+  # Tarkista päivityshistoria: journalctl -u tvheadend-update.service
+  # Testaa käsin heti: sudo systemctl start tvheadend-update.service && journalctl -u tvheadend-update.service -n 15
   systemd.services."tvheadend-update" = {
     description = "Päivitä Tvheadend-konttikuva, käynnistä palvelu uudelleen ja siivoa vanhat kuvat";
     after = [ "network-online.target" ];
@@ -170,13 +197,12 @@
     };
   };
 
-
   systemd.timers."tvheadend-update" = {
     description = "Viikoittainen Tvheadend-päivitysajastin";
     wantedBy = [ "timers.target" ];
     timerConfig = {
       OnCalendar = "Mon *-*-* 16:00:00";
-      Persistent = true; # Ajaa päivityksen myöhemmin, jos kone oli kiinni maanantaina klo 16
+      Persistent = true;
     };
   };
 }
