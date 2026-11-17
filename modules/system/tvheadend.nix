@@ -1,4 +1,4 @@
-{ config, pkgs, lib, username, ... }: {
+{ config, pkgs, username, ... }: {
 
   # Tvheadendin web-käyttöliittymä aukeaa selaimessasi osoitteessa 
   # http://localhost:9981 tai oman koneesi IP-osoitteella
@@ -73,7 +73,6 @@
           "--device=/dev/dvb:/dev/dvb:rw"
           "--ipc=host"
           "--security-opt=label=disable"
-          "--stop-timeout=1"
         ];
       };
     };
@@ -91,27 +90,19 @@
     "d /home/${username}/Videot/tvheadend-tallenteet 0775 ${username} users - -"
   ];
 
-  # 5. VARMA USB-TASOINEN LAITESIDONTA (PCTV Systems tripleStick 292e: 2013:025f)
-  # $ nix-shell -p usbutils
-  # [nix-shell:~]$ lsusb
-  # Bus 001 Device 006: ID 2013:025f PCTV Systems tripleStick 292e
-  # Luodaan oikea laitelinkki /dev/tv-viritin, josta systemd muodostaa automaattisesti
-  # yksikön dev-tv\x2dviritin.device. Kun tikku irrotetaan, linkki katoaa heti.
+  # 5. LUOTETTAVA LAITESIDONTA (udev + systemd)
+  # ÄLÄ lisää tähän ACTION-ehtoa! TAG+="systemd" täytyy olla voimassa myös
+  # remove-tapahtumassa, jotta systemd huomaa tikun irrotuksen.
   services.udev.extraRules = ''
-    SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2013", ATTR{idProduct}=="025f", SYMLINK+="tv-viritin", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
-    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666"
+    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
   '';
 
   systemd.services.podman-tvheadend = {
     restartIfChanged = false;
-    bindsTo = [ "dev-tv\\x2dviritin.device" ];
-    after = [ "network-online.target" "dev-tv\\x2dviritin.device" ];
+    bindsTo = [ "dev-dvb-adapter0-frontend0.device" ];
+    after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
     wants = [ "network-online.target" ];
     serviceConfig = {
-      ExecStartPre = "${pkgs.coreutils}/bin/sleep 2";
-      # Tappaa kontin heti (1 sekunnissa) ilman 10s odotusta, jotta lukkiutunut
-      # DVB-ajuri ei jumita seuraavaa käynnistystä.
-      TimeoutStopSec = lib.mkForce 2;
       SuccessExitStatus = [ 137 143 ];
     };
   };
