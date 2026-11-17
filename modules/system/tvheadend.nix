@@ -1,4 +1,4 @@
-{ config, pkgs, lib, username, ... }: {
+{ config, pkgs, username, ... }: {
 
   # Tvheadendin web-käyttöliittymä aukeaa selaimessasi osoitteessa 
   # http://localhost:9981 tai oman koneesi IP-osoitteella
@@ -24,7 +24,6 @@
   # sudo systemctl restart podman-tvheadend.service  Kontin uudelleenkäynnistys
   # sudo systemctl status podman-tvheadend.service   Tilanteen ja lokien tarkistaminen
   # sudo journalctl -u podman-tvheadend.service -f   Tai lukea kontin antamia suoria lokeja
-  # sudo journalctl -u tvviritin-watcher.service -f  USB-tikun tunnistuslokien seuranta
   #
   # Manuaalinen päivitys Tvheadend-kontille:
   # sudo podman pull lscr.io/linuxserver/tvheadend:latest
@@ -49,8 +48,8 @@
       tvheadend = {
         image = "lscr.io/linuxserver/tvheadend:latest";
         
-        # Pidä false-arvossa: tvviritin-watcher hoitaa käynnistyksen automaattisesti,
-        # kun PCTV 292e -tikku on kytkettynä.
+        # Pidä false-arvossa: udev ja systemd käynnistävät kontin automaattisesti,
+        # kun DVB-viritin havaitaan järjestelmässä.
         autoStart = false;
 
         ports = [
@@ -85,56 +84,19 @@
     "d /home/${username}/Videot/tvheadend-tallenteet 0775 ${username} users - -"
   ];
 
-  # 4. POMMINVARMA USB-VIRITTIMEN SEURANTA (PCTV Systems tripleStick 292e: 2013:025f)
-  # Luodaan laitelinkki /dev/tvviritin ilman udev-sandboxin estämiä komentoja.
+  # 4. LUOTETTAVA LAITESIDONTA (udev + systemd)
+  # ÄLÄ lisää tähän ACTION-ehtoa! TAG+="systemd" täytyy olla voimassa myös
+  # remove-tapahtumassa, jotta systemd huomaa tikun irrotuksen.
   services.udev.extraRules = ''
-    SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2013", ATTR{idProduct}=="025f", SYMLINK+="tvviritin"
-    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666"
+    SUBSYSTEM=="dvb", KERNEL=="*frontend*", MODE="0666", TAG+="systemd", ENV{SYSTEMD_WANTS}+="podman-tvheadend.service"
   '';
-
-  # Taustapalvelu, joka valvoo /dev/tvviritin -linkin ilmestymistä ja katoamista reaaliajassa
-  systemd.services."tvviritin-watcher" = {
-    description = "Käynnistä ja sammuta Tvheadend USB-virittimen kytkennän mukaan";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "systemd-udevd.service" "network-online.target" ];
-    wants = [ "network-online.target" ];
-    path = with pkgs; [ systemd coreutils inotify-tools ];
-
-    script = ''
-      # Tarkistetaan alkutilanne koneen käynnistyessä
-      if [ -e /dev/tvviritin ]; then
-        echo "[TV-viritin] Viritin havaittu käynnistyksessä. Käynnistetään Tvheadend..."
-        sleep 2
-        systemctl start podman-tvheadend.service
-      fi
-
-      # Seurataan /dev-hakemistoa (0% CPU-kuorma, reagoi välittömästi)
-      inotifywait -m -e create -e delete /dev --format '%e %f' | while read EVENT FILE; do
-        if [ "$FILE" = "tvviritin" ]; then
-          if [ "$EVENT" = "CREATE" ]; then
-            echo "[TV-viritin] USB-viritin kytketty. Odotetaan firmwarea ja käynnistetään Tvheadend..."
-            sleep 2
-            systemctl restart podman-tvheadend.service
-          elif [ "$EVENT" = "DELETE" ]; then
-            echo "[TV-viritin] USB-viritin irrotettu. Sammutetaan Tvheadend välittömästi..."
-            systemctl stop podman-tvheadend.service
-          fi
-        fi
-      done
-    '';
-
-    serviceConfig = {
-      Restart = "always";
-      RestartSec = 2;
-    };
-  };
 
   systemd.services.podman-tvheadend = {
     restartIfChanged = false;
-    after = [ "network-online.target" ];
+    bindsTo = [ "dev-dvb-adapter0-frontend0.device" ];
+    after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
     wants = [ "network-online.target" ];
     serviceConfig = {
-      TimeoutStopSec = lib.mkForce 2;
       SuccessExitStatus = [ 137 143 ];
     };
   };
@@ -142,7 +104,7 @@
   # 5. Palomuurin avaukset
   networking.firewall = {
     allowedTCPPorts = [ 9981 9982 ];
-    allowedUDPPorts = [ 9982 ];
+    allowedUDPPorts =;
   };
 
   # 6. Live TV -pikakuvake työpöytävalikkoon
