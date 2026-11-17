@@ -99,10 +99,15 @@
   '';
 
   systemd.services.podman-tvheadend = {
+    # Estää nixos-rebuild switchiä jäämästä jumiin, jos tikku ei ole kiinni päivityshetkellä
+    restartIfChanged = false;
+    
+    # Jos tikku irrotetaan ajon aikana, palvelu sammuu, mutta käynnistys ei jää odottamaan
     bindsTo = [ "dev-dvb-adapter0-frontend0.device" ];
     after = [ "network-online.target" "dev-dvb-adapter0-frontend0.device" ];
     wants = [ "network-online.target" ];
   };
+
 
 
   # 6. Palomuurin avaukset
