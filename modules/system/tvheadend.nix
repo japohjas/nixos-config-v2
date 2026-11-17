@@ -97,6 +97,7 @@
     description = "Käynnistä ja sammuta Tvheadend USB-virittimen kytkennän mukaan";
     wantedBy = [ "multi-user.target" ];
     after = [ "systemd-udevd.service" "network-online.target" ];
+    wants = [ "network-online.target" ];
     path = with pkgs; [ systemd coreutils inotify-tools ];
 
     script = ''
