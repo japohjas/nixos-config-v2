@@ -123,7 +123,7 @@
       genericName = "Televisio";
       comment = "Katso TV-lähetyksiä Tvheadendistä MPV-soittimella";
       # exec = "mpv http://localhost:9981/playlist/channels";
-      exec = "mpv --ytdl=no --no-resume-playback --osd-playing-msg='\${media-title}' http://localhost:9981/playlist/channels";
+      exec = "mpv --ytdl=no --no-resume-playback --slang=fin --alang=fin --sid=1 http://localhost:9981/playlist/channels"
       # Jos olet määritellyt käyttäjätunnuksen ja salasanan Tvheadendin web-käyttöliittymään:
       # exec = "mpv http://kayttaja:salasana@localhost:9981/playlist/channels";
       icon = "mpv";
