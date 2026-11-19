@@ -21,6 +21,7 @@
     # papers                  # GNOME:n dokumenttikatselin (PDF)
     htop                    # Järjestelmämonitori terminaalissa
     fastfetch               # Järjestelmätietojen haku
+    atril                   # Kevyt PDF-katselin
 
     # Cosmic Desktop -kokeilut (unstable)
     # cosmic-viewer           # Yksinkertainen kuvakatselin
