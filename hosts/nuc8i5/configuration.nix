@@ -107,11 +107,6 @@
   # Allow unfree packages
   nixpkgs.config.allowUnfree = true;
 
-  # Näytön kirkkauden säätö, ddcutil, DDC/CI-tuki ja oikeudet käyttöön
-  # https://search.nixos.org/options?show=hardware.i2c.enable
-  
-  hardware.i2c.enable = true;
-  
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
   # List packages installed in system profile. To search, run:
@@ -121,20 +116,10 @@
     wget
     # git
     # libreelec-dvb-firmware	# digitv-ajuri
-    ddcutil		# näytön kirkkauden säätö
   ];
   
   environment.variables.EDITOR = "vim";
   
-  # Järjestelmänlaajuiset Ympäristömuuttujat kaikille käyttäjille ja työpöydille
-    environment.sessionVariables = {
-      MOZ_ENABLE_WAYLAND = "1";      # Pakottaa Firefoxin natiiviin Wayland-tilaan (ei XWayland-renderöintiä)
-      NIXOS_OZONE_WL = "1";          # Chromium-selaimet (Vivaldi, Chrome) natiiviin Wayland-tilaan
-      GDK_BACKEND = "wayland";       # GTK-sovellukset (GIMP, Darktable, Papers) Waylandille
-      QT_QPA_PLATFORM = "wayland";   # Qt/KDE-sovellukset (digiKam, KeePassXC) Waylandille ja teemoille
-      XCURSOR_SIZE = "32";           # Muuta arvoa tarpeen mukaan (esim. 24 (default), 32, 48)
-    };
-
 
   # Some programs need SUID wrappers, can be configured further or are
   # started in user sessions.
